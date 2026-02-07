@@ -264,8 +264,9 @@ export default function App() {
 
   const handleDragStart = (taskId: string, column: string) =>
     (event: DragEvent<HTMLElement>) => {
-      event.dataTransfer.setData("text/plain", taskId);
-      event.dataTransfer.setData("text/column", column);
+      const payload = JSON.stringify({ taskId, column });
+      event.dataTransfer.setData("application/json", payload);
+      event.dataTransfer.setData("text/plain", payload);
       event.dataTransfer.effectAllowed = "move";
     };
 
@@ -273,8 +274,22 @@ export default function App() {
     event: DragEvent<HTMLElement>
   ) => {
     event.preventDefault();
-    const taskId = event.dataTransfer.getData("text/plain");
-    const fromColumn = event.dataTransfer.getData("text/column");
+    const raw =
+      event.dataTransfer.getData("application/json") ||
+      event.dataTransfer.getData("text/plain");
+    if (!raw) return;
+
+    let taskId = "";
+    let fromColumn = "";
+
+    try {
+      const parsed = JSON.parse(raw) as { taskId?: string; column?: string };
+      taskId = parsed.taskId ?? "";
+      fromColumn = parsed.column ?? "";
+    } catch {
+      taskId = raw;
+    }
+
     if (!taskId || fromColumn === column) return;
     await invoke("update_task_column", {
       payload: { taskId, column },
