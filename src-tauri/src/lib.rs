@@ -754,10 +754,10 @@ fn create_story(app: AppHandle, payload: CreateStoryPayload) -> std::result::Res
     })()
     .map_err(|e| e.to_string())
 }
-\n\n
+
 #[tauri::command]
 async fn openai_autofill_story(
-    app: AppHandle,
+    _app: AppHandle,
     payload: OpenAiAutoFillPayload,
 ) -> std::result::Result<OpenAiAutoFillResponse, String> {
     (async move {
@@ -801,8 +801,8 @@ async fn openai_autofill_story(
         let mut response = request(&model).send().await?;
 
         if !response.status().is_success() {
-            let text = response.text().await.unwrap_or_default();
             let status = response.status();
+            let text = response.text().await.unwrap_or_default();
             let should_fallback = model != fallback_model
                 && (status.as_u16() == 404
                     || text.to_lowercase().contains("model"));
@@ -834,7 +834,7 @@ async fn openai_autofill_story(
 
         let parsed: OpenAiAutoFillResponse = serde_json::from_str(content)?;
         Ok(parsed)
-    })()
+    })
     .await
     .map_err(|e| e.to_string())
 }
