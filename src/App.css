@@ -121,6 +121,13 @@ select {
   display: flex;
   flex-direction: column;
   min-height: 240px;
+  transition: border-color 120ms ease, box-shadow 120ms ease, background 120ms ease;
+}
+
+.column.dragOver {
+  border-color: rgba(120, 160, 255, 0.7);
+  background: rgba(120, 160, 255, 0.14);
+  box-shadow: 0 0 0 2px rgba(120, 160, 255, 0.2);
 }
 
 .columnHeader {

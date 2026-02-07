@@ -87,7 +87,7 @@ export default function App() {
   const [useAiAutofill, setUseAiAutofill] = useState(true);
   const [aiError, setAiError] = useState<string | null>(null);
   const [isAutofilling, setIsAutofilling] = useState(false);
-
+  const [dragOverColumn, setDragOverColumn] = useState<string | null>(null);
 
   const activeBoard = useMemo(
     () => boards.find((b) => b.id === activeBoardId) ?? null,
@@ -275,6 +275,7 @@ export default function App() {
   ) => {
     event.preventDefault();
     event.stopPropagation();
+    setDragOverColumn(null);
     const raw =
       event.dataTransfer.getData("application/json") ||
       event.dataTransfer.getData("text/plain");
@@ -298,8 +299,15 @@ export default function App() {
     await refreshBoard();
   };
 
-  const handleDragOver = (event: DragEvent<HTMLElement>) => {
+  const handleDragOver = (column: string) => (event: DragEvent<HTMLElement>) => {
     event.preventDefault();
+    if (dragOverColumn !== column) setDragOverColumn(column);
+  };
+
+  const handleDragLeave = (column: string) => (event: DragEvent<HTMLElement>) => {
+    const next = event.relatedTarget as Node | null;
+    if (next && event.currentTarget.contains(next)) return;
+    if (dragOverColumn === column) setDragOverColumn(null);
   };
 
   return (
@@ -362,9 +370,10 @@ export default function App() {
           {boardData.columns.map((col) => (
             <div
               key={col.name}
-              className="column"
+              className={`column ${dragOverColumn === col.name ? "dragOver" : ""}`}
               onDrop={handleDrop(col.name)}
-              onDragOver={handleDragOver}
+              onDragOver={handleDragOver(col.name)}
+              onDragLeave={handleDragLeave(col.name)}
             >
               <div className="columnHeader">
                 <div className="columnName">{col.name}</div>
@@ -374,7 +383,8 @@ export default function App() {
               <div
                 className="cards"
                 onDrop={handleDrop(col.name)}
-                onDragOver={handleDragOver}
+                onDragOver={handleDragOver(col.name)}
+                onDragLeave={handleDragLeave(col.name)}
               >
                 {col.tasks.map((t) => (
                   <article
@@ -382,7 +392,8 @@ export default function App() {
                     className="card"
                     draggable
                     onDragStart={handleDragStart(t.id, col.name)}
-                    onDragOver={handleDragOver}
+                    onDragOver={handleDragOver(col.name)}
+                    onDragLeave={handleDragLeave(col.name)}
                   >
                     <div className="cardTitle">{t.title}</div>
                     <div className="cardMeta">
