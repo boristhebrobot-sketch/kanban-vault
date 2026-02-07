@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import type { DragEvent } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import "./App.css";
 
@@ -32,6 +33,25 @@ type BoardWithTasks = {
 
 type VaultInfo = { path: string };
 
+type Project = {
+  id: string;
+  title: string;
+  owner?: string | null;
+  description?: string | null;
+};
+
+type Epic = {
+  id: string;
+  title: string;
+  project_id?: string | null;
+  owner?: string | null;
+  description?: string | null;
+};
+
+type WizardType = "project" | "epic" | "story";
+
+type WizardErrors = Record<string, string>;
+
 export default function App() {
   const [vaultInfo, setVaultInfo] = useState<VaultInfo | null>(null);
   const [boards, setBoards] = useState<Board[]>([]);
@@ -39,6 +59,24 @@ export default function App() {
   const [boardData, setBoardData] = useState<BoardWithTasks | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState<boolean>(true);
+
+  const [isWizardOpen, setIsWizardOpen] = useState(false);
+  const [wizardStep, setWizardStep] = useState(0);
+  const [wizardType, setWizardType] = useState<WizardType>("story");
+  const [wizardErrors, setWizardErrors] = useState<WizardErrors>({});
+  const [projects, setProjects] = useState<Project[]>([]);
+  const [epics, setEpics] = useState<Epic[]>([]);
+
+  const [title, setTitle] = useState("");
+  const [owner, setOwner] = useState("");
+  const [description, setDescription] = useState("");
+  const [projectId, setProjectId] = useState("");
+  const [epicId, setEpicId] = useState("");
+  const [asA, setAsA] = useState("");
+  const [iWant, setIWant] = useState("");
+  const [soThat, setSoThat] = useState("");
+  const [acceptanceCriteria, setAcceptanceCriteria] = useState<string[]>([""]);
+  const [useAiAutofill, setUseAiAutofill] = useState(true);
 
   const activeBoard = useMemo(
     () => boards.find((b) => b.id === activeBoardId) ?? null,
@@ -79,6 +117,140 @@ export default function App() {
     })();
   }, [activeBoardId]);
 
+  const refreshBoard = async () => {
+    if (!activeBoardId) return;
+    const data = await invoke<BoardWithTasks>("get_board_with_tasks", {
+      boardId: activeBoardId,
+    });
+    setBoardData(data);
+  };
+
+  const openWizard = async () => {
+    setWizardErrors({});
+    setWizardStep(0);
+    setIsWizardOpen(true);
+    const [proj, epi] = await Promise.all([
+      invoke<Project[]>("list_projects"),
+      invoke<Epic[]>("list_epics"),
+    ]);
+    setProjects(proj);
+    setEpics(epi);
+  };
+
+  const closeWizard = () => {
+    setIsWizardOpen(false);
+    setWizardErrors({});
+  };
+
+  const resetWizardForm = () => {
+    setTitle("");
+    setOwner("");
+    setDescription("");
+    setProjectId("");
+    setEpicId("");
+    setAsA("");
+    setIWant("");
+    setSoThat("");
+    setAcceptanceCriteria([""]);
+  };
+
+  const validateWizard = (): boolean => {
+    const errors: WizardErrors = {};
+    if (!title.trim()) errors.title = "Title is required.";
+    if (wizardType === "epic" && !projectId) {
+      errors.projectId = "Select a project to link this epic.";
+    }
+    if (wizardType === "story") {
+      if (!description.trim()) errors.description = "Description is required.";
+      if (!asA.trim()) errors.asA = "As a… is required.";
+      if (!iWant.trim()) errors.iWant = "I want… is required.";
+      if (!soThat.trim()) errors.soThat = "So that… is required.";
+    }
+    setWizardErrors(errors);
+    return Object.keys(errors).length === 0;
+  };
+
+  const handleSubmitWizard = async () => {
+    if (!validateWizard()) return;
+
+    if (wizardType === "project") {
+      await invoke("create_project", {
+        payload: {
+          title,
+          owner: owner || null,
+          description: description || null,
+        },
+      });
+    } else if (wizardType === "epic") {
+      await invoke("create_epic", {
+        payload: {
+          title,
+          projectId: projectId || null,
+          owner: owner || null,
+          description: description || null,
+        },
+      });
+    } else {
+      await invoke("create_story", {
+        payload: {
+          title,
+          projectId: projectId || null,
+          epicId: epicId || null,
+          owner: owner || null,
+          description: description || null,
+          asA: asA || null,
+          iWant: iWant || null,
+          soThat: soThat || null,
+          acceptanceCriteria: acceptanceCriteria.filter((c) => c.trim().length),
+          column: "Backlog",
+        },
+      });
+      await refreshBoard();
+    }
+
+    resetWizardForm();
+    closeWizard();
+  };
+
+  const handleAutoFill = () => {
+    if (!useAiAutofill) return;
+    const summary = description.trim();
+    if (!title && summary) setTitle(summary.split(".")[0] || summary);
+    if (!asA) setAsA("user");
+    if (!iWant) setIWant(summary || "achieve a goal");
+    if (!soThat) setSoThat("get a clear outcome");
+    if (acceptanceCriteria.every((c) => !c.trim())) {
+      setAcceptanceCriteria([
+        "Given a valid input, when I submit, then the story is created",
+        "All required fields are validated and missing info is flagged",
+      ]);
+    }
+  };
+
+  const handleDragStart = (taskId: string, column: string) =>
+    (event: DragEvent<HTMLElement>) => {
+      event.dataTransfer.setData("text/plain", taskId);
+      event.dataTransfer.setData("text/column", column);
+      event.dataTransfer.effectAllowed = "move";
+    };
+
+  const handleDrop = (column: string) => async (
+    event: DragEvent<HTMLElement>
+  ) => {
+    event.preventDefault();
+    const taskId = event.dataTransfer.getData("text/plain");
+    const fromColumn = event.dataTransfer.getData("text/column");
+    if (!taskId || fromColumn === column) return;
+    await invoke("update_task_column", {
+      payload: { taskId, column },
+    });
+    await refreshBoard();
+  };
+
+  const handleDragOver = (event: DragEvent<HTMLElement>) => {
+    event.preventDefault();
+  };
+
   return (
     <main className="app">
       <header className="topbar">
@@ -104,6 +276,9 @@ export default function App() {
               ))}
             </select>
           </label>
+          <button className="button" onClick={openWizard}>
+            New item
+          </button>
         </div>
       </header>
 
@@ -134,7 +309,12 @@ export default function App() {
       {boardData ? (
         <section className="board">
           {boardData.columns.map((col) => (
-            <div key={col.name} className="column">
+            <div
+              key={col.name}
+              className="column"
+              onDrop={handleDrop(col.name)}
+              onDragOver={handleDragOver}
+            >
               <div className="columnHeader">
                 <div className="columnName">{col.name}</div>
                 <div className="columnCount">{col.tasks.length}</div>
@@ -142,7 +322,12 @@ export default function App() {
 
               <div className="cards">
                 {col.tasks.map((t) => (
-                  <article key={t.id} className="card">
+                  <article
+                    key={t.id}
+                    className="card"
+                    draggable
+                    onDragStart={handleDragStart(t.id, col.name)}
+                  >
                     <div className="cardTitle">{t.title}</div>
                     <div className="cardMeta">
                       <code>{t.id}</code>
@@ -165,6 +350,254 @@ export default function App() {
         </section>
       ) : !loading ? (
         <div className="state">No board loaded.</div>
+      ) : null}
+
+      {isWizardOpen ? (
+        <div className="modalBackdrop" onClick={closeWizard}>
+          <div
+            className="modal"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <header className="modalHeader">
+              <div>
+                <div className="modalTitle">Create new item</div>
+                <div className="modalSubtitle">
+                  Guided setup for projects, epics, and stories
+                </div>
+              </div>
+              <button className="ghostButton" onClick={closeWizard}>
+                Close
+              </button>
+            </header>
+
+            <div className="wizardSteps">
+              {["Type", "Details", "Story"].map((step, index) => (
+                <button
+                  key={step}
+                  className={`step ${wizardStep === index ? "active" : ""}`}
+                  onClick={() => setWizardStep(index)}
+                >
+                  {step}
+                </button>
+              ))}
+            </div>
+
+            {wizardStep === 0 ? (
+              <div className="wizardBody">
+                <div className="field">
+                  <label>Item type</label>
+                  <div className="segmented">
+                    {(["project", "epic", "story"] as WizardType[]).map((t) => (
+                      <button
+                        key={t}
+                        className={`segment ${wizardType === t ? "active" : ""}`}
+                        onClick={() => setWizardType(t)}
+                      >
+                        {t}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+                <p className="hint">
+                  Projects group epics, epics group stories, stories appear on the
+                  board.
+                </p>
+              </div>
+            ) : null}
+
+            {wizardStep === 1 ? (
+              <div className="wizardBody">
+                <div className="field">
+                  <label>Title *</label>
+                  <input
+                    value={title}
+                    onChange={(e) => setTitle(e.currentTarget.value)}
+                    placeholder="Short, descriptive title"
+                  />
+                  {wizardErrors.title ? (
+                    <div className="errorText">{wizardErrors.title}</div>
+                  ) : null}
+                </div>
+
+                <div className="field">
+                  <label>Owner</label>
+                  <input
+                    value={owner}
+                    onChange={(e) => setOwner(e.currentTarget.value)}
+                    placeholder="Dylan, Boris, or a team"
+                  />
+                </div>
+
+                <div className="field">
+                  <label>Description {wizardType === "story" ? "*" : ""}</label>
+                  <textarea
+                    value={description}
+                    onChange={(e) => setDescription(e.currentTarget.value)}
+                    placeholder="Describe the project/epic/story"
+                  />
+                  {wizardErrors.description ? (
+                    <div className="errorText">{wizardErrors.description}</div>
+                  ) : null}
+                </div>
+
+                {wizardType !== "project" ? (
+                  <div className="field">
+                    <label>Project *</label>
+                    <select
+                      value={projectId}
+                      onChange={(e) => setProjectId(e.currentTarget.value)}
+                    >
+                      <option value="">Select project</option>
+                      {projects.map((p) => (
+                        <option key={p.id} value={p.id}>
+                          {p.title}
+                        </option>
+                      ))}
+                    </select>
+                    {wizardErrors.projectId ? (
+                      <div className="errorText">{wizardErrors.projectId}</div>
+                    ) : null}
+                  </div>
+                ) : null}
+
+                {wizardType === "story" ? (
+                  <div className="field">
+                    <label>Epic</label>
+                    <select
+                      value={epicId}
+                      onChange={(e) => setEpicId(e.currentTarget.value)}
+                    >
+                      <option value="">Select epic</option>
+                      {epics
+                        .filter((epic) =>
+                          projectId
+                            ? epic.project_id === projectId
+                            : true
+                        )
+                        .map((epic) => (
+                          <option key={epic.id} value={epic.id}>
+                            {epic.title}
+                          </option>
+                        ))}
+                    </select>
+                  </div>
+                ) : null}
+              </div>
+            ) : null}
+
+            {wizardStep === 2 ? (
+              <div className="wizardBody">
+                {wizardType !== "story" ? (
+                  <div className="hint">
+                    Stories are the only items that appear on the board.
+                  </div>
+                ) : (
+                  <>
+                    <div className="field inline">
+                      <label>AI auto-fill</label>
+                      <input
+                        type="checkbox"
+                        checked={useAiAutofill}
+                        onChange={(e) => setUseAiAutofill(e.currentTarget.checked)}
+                      />
+                      <button className="ghostButton" onClick={handleAutoFill}>
+                        Auto-fill with AI
+                      </button>
+                    </div>
+
+                    <div className="field">
+                      <label>As a *</label>
+                      <input
+                        value={asA}
+                        onChange={(e) => setAsA(e.currentTarget.value)}
+                        placeholder="persona or user role"
+                      />
+                      {wizardErrors.asA ? (
+                        <div className="errorText">{wizardErrors.asA}</div>
+                      ) : null}
+                    </div>
+
+                    <div className="field">
+                      <label>I want *</label>
+                      <input
+                        value={iWant}
+                        onChange={(e) => setIWant(e.currentTarget.value)}
+                        placeholder="the goal or capability"
+                      />
+                      {wizardErrors.iWant ? (
+                        <div className="errorText">{wizardErrors.iWant}</div>
+                      ) : null}
+                    </div>
+
+                    <div className="field">
+                      <label>So that *</label>
+                      <input
+                        value={soThat}
+                        onChange={(e) => setSoThat(e.currentTarget.value)}
+                        placeholder="the outcome or benefit"
+                      />
+                      {wizardErrors.soThat ? (
+                        <div className="errorText">{wizardErrors.soThat}</div>
+                      ) : null}
+                    </div>
+
+                    <div className="field">
+                      <label>Acceptance criteria</label>
+                      {acceptanceCriteria.map((criterion, index) => (
+                        <div key={index} className="criteriaRow">
+                          <input
+                            value={criterion}
+                            onChange={(e) => {
+                              const next = [...acceptanceCriteria];
+                              next[index] = e.currentTarget.value;
+                              setAcceptanceCriteria(next);
+                            }}
+                            placeholder={`Criterion ${index + 1}`}
+                          />
+                          <button
+                            className="ghostButton"
+                            onClick={() =>
+                              setAcceptanceCriteria((prev) =>
+                                prev.filter((_, i) => i !== index)
+                              )
+                            }
+                          >
+                            Remove
+                          </button>
+                        </div>
+                      ))}
+                      <button
+                        className="ghostButton"
+                        onClick={() =>
+                          setAcceptanceCriteria((prev) => [...prev, ""])
+                        }
+                      >
+                        Add criterion
+                      </button>
+                    </div>
+                  </>
+                )}
+              </div>
+            ) : null}
+
+            <footer className="modalFooter">
+              <button
+                className="ghostButton"
+                onClick={() => setWizardStep(Math.max(0, wizardStep - 1))}
+              >
+                Back
+              </button>
+              <div className="footerActions">
+                <button className="ghostButton" onClick={closeWizard}>
+                  Cancel
+                </button>
+                <button className="button" onClick={handleSubmitWizard}>
+                  Create
+                </button>
+              </div>
+            </footer>
+          </div>
+        </div>
       ) : null}
     </main>
   );
