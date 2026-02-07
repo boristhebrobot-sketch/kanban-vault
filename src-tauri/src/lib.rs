@@ -1,6 +1,7 @@
 // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
 
 use serde::{Deserialize, Serialize};
+use serde_json::json;
 use std::{
     collections::HashMap,
     fs,
@@ -16,10 +17,16 @@ enum VaultError {
     Io(#[from] std::io::Error),
     #[error("yaml error: {0}")]
     Yaml(#[from] serde_yaml::Error),
+    #[error("json error: {0}")]
+    Json(#[from] serde_json::Error),
+    #[error("openai error: {0}")]
+    OpenAi(#[from] reqwest::Error),
     #[error("invalid frontmatter: {0}")]
     InvalidFrontmatter(String),
     #[error("board not found: {0}")]
     BoardNotFound(String),
+    #[error("OpenAI API key not configured. Set OPENAI_API_KEY in the environment.")]
+    OpenAiKeyMissing,
 }
 
 type Result<T> = std::result::Result<T, VaultError>;
@@ -96,6 +103,27 @@ pub struct Epic {
     pub description: Option<String>,
 }
 
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+struct OpenAiAutoFillPayload {
+    title: Option<String>,
+    description: String,
+    as_a: Option<String>,
+    i_want: Option<String>,
+    so_that: Option<String>,
+    acceptance_criteria: Option<Vec<String>>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+struct OpenAiAutoFillResponse {
+    title: Option<String>,
+    as_a: Option<String>,
+    i_want: Option<String>,
+    so_that: Option<String>,
+    acceptance_criteria: Option<Vec<String>>,
+}
+
 fn vault_dir(app: &AppHandle) -> Result<PathBuf> {
     // Use OS-specific app data dir so the vault persists across app restarts.
     // e.g. ~/Library/Application Support/<bundle-id>/vault
@@ -104,6 +132,22 @@ fn vault_dir(app: &AppHandle) -> Result<PathBuf> {
         .app_data_dir()
         .map_err(|e| VaultError::InvalidFrontmatter(format!("failed to get app_data_dir: {e}")))?;
     Ok(base.join("vault"))
+}
+
+fn resolve_openai_key() -> Result<String> {
+    if let Ok(value) = std::env::var("OPENAI_API_KEY") {
+        if !value.trim().is_empty() {
+            return Ok(value);
+        }
+    }
+
+    Err(VaultError::OpenAiKeyMissing)
+}
+
+fn resolve_openai_model() -> (String, String) {
+    let primary = std::env::var("OPENAI_MODEL").unwrap_or_else(|_| "gpt-4o-mini".to_string());
+    let fallback = std::env::var("OPENAI_MODEL_FALLBACK").unwrap_or_else(|_| "gpt-4o-mini".to_string());
+    (primary, fallback)
 }
 
 fn ensure_vault_layout(vault: &Path) -> Result<()> {
@@ -121,15 +165,58 @@ fn ensure_vault_layout(vault: &Path) -> Result<()> {
 id: default
 title: Default Board
 columns:
+  - Inbox
   - Backlog
-  - Ready for Development
-  - In Progress (Boris)
-  - In Progress (Dylan)
-  - Ready for Review
-  - Completed
+  - Ready
+  - In Progress
+  - Review
+  - Done
 ---
 
 Project management board for the app.
+"#,
+        )?;
+    }
+
+    let projects_dir = vault.join("projects");
+    let has_any_project = fs::read_dir(&projects_dir)
+        .ok()
+        .and_then(|mut rd| rd.next())
+        .is_some();
+    if !has_any_project {
+        fs::write(
+            projects_dir.join("project-1.md"),
+            r#"---
+id: project-1
+title: Kanban Vault MVP
+owner: Product
+created: 2026-02-06
+description: Core workflows and vault structure.
+---
+
+Core workflows and vault structure.
+"#,
+        )?;
+    }
+
+    let epics_dir = vault.join("epics");
+    let has_any_epic = fs::read_dir(&epics_dir)
+        .ok()
+        .and_then(|mut rd| rd.next())
+        .is_some();
+    if !has_any_epic {
+        fs::write(
+            epics_dir.join("epic-1.md"),
+            r#"---
+id: epic-1
+title: Wizard-driven story intake
+project_id: project-1
+owner: Product
+created: 2026-02-06
+description: Guided story creation with AI support.
+---
+
+Guided story creation with AI support.
 "#,
         )?;
     }
@@ -141,31 +228,31 @@ Project management board for the app.
         .is_some();
     if !has_any_task {
         fs::write(
-            tasks_dir.join("task-1.md"),
+            tasks_dir.join("story-1.md"),
             r#"---
-id: task-1
+id: story-1
 title: Welcome to Kanban Vault
 board: default
-column: Backlog
-tags: [welcome]
+column: Inbox
+tags: [welcome, story]
 created: 2026-02-06
 ---
 
-This is a task stored as a single Markdown file.
+This is a story stored as a Markdown file inside the vault.
 "#,
         )?;
         fs::write(
-            tasks_dir.join("task-2.md"),
+            tasks_dir.join("story-2.md"),
             r#"---
-id: task-2
-title: Drag/drop and editing (coming soon)
+id: story-2
+title: Try drag + drop between statuses
 board: default
-column: In Progress (Boris)
-tags: [ui]
+column: In Progress
+tags: [ui, story]
 created: 2026-02-06
 ---
 
-Next steps: add editing, drag/drop, and a detail pane.
+Move this card across columns to update its status.
 "#,
         )?;
     }
@@ -667,6 +754,90 @@ fn create_story(app: AppHandle, payload: CreateStoryPayload) -> std::result::Res
     })()
     .map_err(|e| e.to_string())
 }
+\n\n
+#[tauri::command]
+async fn openai_autofill_story(
+    app: AppHandle,
+    payload: OpenAiAutoFillPayload,
+) -> std::result::Result<OpenAiAutoFillResponse, String> {
+    (async move {
+        let api_key = resolve_openai_key()?;
+        let (model, fallback_model) = resolve_openai_model();
+        let prompt = format!(
+            "Generate missing story fields. Return JSON only with keys: title, asA, iWant, soThat, acceptanceCriteria (array of strings).\n\nDescription: {}\nExisting title: {}\nExisting asA: {}\nExisting iWant: {}\nExisting soThat: {}\nExisting acceptanceCriteria: {}",
+            payload.description,
+            payload.title.clone().unwrap_or_default(),
+            payload.as_a.clone().unwrap_or_default(),
+            payload.i_want.clone().unwrap_or_default(),
+            payload.so_that.clone().unwrap_or_default(),
+            payload
+                .acceptance_criteria
+                .clone()
+                .unwrap_or_default()
+                .join("; ")
+        );
+
+        let client = reqwest::Client::new();
+
+        let request = |model_name: &str| {
+            let body = json!({
+                "model": model_name,
+                "messages": [
+                    {
+                        "role": "system",
+                        "content": "You are a product manager writing user stories. Only return JSON, no markdown. Keep answers concise. Use null for fields you cannot infer."
+                    },
+                    { "role": "user", "content": prompt }
+                ],
+                "response_format": { "type": "json_object" }
+            });
+
+            client
+                .post("https://api.openai.com/v1/chat/completions")
+                .bearer_auth(&api_key)
+                .json(&body)
+        };
+
+        let mut response = request(&model).send().await?;
+
+        if !response.status().is_success() {
+            let text = response.text().await.unwrap_or_default();
+            let status = response.status();
+            let should_fallback = model != fallback_model
+                && (status.as_u16() == 404
+                    || text.to_lowercase().contains("model"));
+
+            if should_fallback {
+                response = request(&fallback_model).send().await?;
+            } else {
+                return Err(VaultError::InvalidFrontmatter(format!(
+                    "OpenAI error: {text}"
+                )));
+            }
+        }
+
+        if !response.status().is_success() {
+            let text = response.text().await.unwrap_or_default();
+            return Err(VaultError::InvalidFrontmatter(format!(
+                "OpenAI error: {text}"
+            )));
+        }
+
+        let value: serde_json::Value = response.json().await?;
+        let content = value
+            .get("choices")
+            .and_then(|choices| choices.get(0))
+            .and_then(|choice| choice.get("message"))
+            .and_then(|message| message.get("content"))
+            .and_then(|content| content.as_str())
+            .unwrap_or("{}");
+
+        let parsed: OpenAiAutoFillResponse = serde_json::from_str(content)?;
+        Ok(parsed)
+    })()
+    .await
+    .map_err(|e| e.to_string())
+}
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -682,7 +853,8 @@ pub fn run() {
             list_epics,
             create_project,
             create_epic,
-            create_story
+            create_story,
+            openai_autofill_story
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

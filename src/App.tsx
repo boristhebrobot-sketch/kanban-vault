@@ -52,6 +52,14 @@ type WizardType = "project" | "epic" | "story";
 
 type WizardErrors = Record<string, string>;
 
+type AutoFillResponse = {
+  title?: string | null;
+  asA?: string | null;
+  iWant?: string | null;
+  soThat?: string | null;
+  acceptanceCriteria?: string[] | null;
+};
+
 export default function App() {
   const [vaultInfo, setVaultInfo] = useState<VaultInfo | null>(null);
   const [boards, setBoards] = useState<Board[]>([]);
@@ -77,6 +85,9 @@ export default function App() {
   const [soThat, setSoThat] = useState("");
   const [acceptanceCriteria, setAcceptanceCriteria] = useState<string[]>([""]);
   const [useAiAutofill, setUseAiAutofill] = useState(true);
+  const [aiError, setAiError] = useState<string | null>(null);
+  const [isAutofilling, setIsAutofilling] = useState(false);
+
 
   const activeBoard = useMemo(
     () => boards.find((b) => b.id === activeBoardId) ?? null,
@@ -129,6 +140,7 @@ export default function App() {
     setWizardErrors({});
     setWizardStep(0);
     setIsWizardOpen(true);
+    setAiError(null);
     const [proj, epi] = await Promise.all([
       invoke<Project[]>("list_projects"),
       invoke<Epic[]>("list_epics"),
@@ -140,6 +152,7 @@ export default function App() {
   const closeWizard = () => {
     setIsWizardOpen(false);
     setWizardErrors({});
+    setAiError(null);
   };
 
   const resetWizardForm = () => {
@@ -212,18 +225,40 @@ export default function App() {
     closeWizard();
   };
 
-  const handleAutoFill = () => {
+  const handleAutoFill = async () => {
     if (!useAiAutofill) return;
-    const summary = description.trim();
-    if (!title && summary) setTitle(summary.split(".")[0] || summary);
-    if (!asA) setAsA("user");
-    if (!iWant) setIWant(summary || "achieve a goal");
-    if (!soThat) setSoThat("get a clear outcome");
-    if (acceptanceCriteria.every((c) => !c.trim())) {
-      setAcceptanceCriteria([
-        "Given a valid input, when I submit, then the story is created",
-        "All required fields are validated and missing info is flagged",
-      ]);
+    setAiError(null);
+    if (!description.trim()) {
+      setAiError("Add a short description before running auto-fill.");
+      return;
+    }
+    try {
+      setIsAutofilling(true);
+      const result = await invoke<AutoFillResponse>("openai_autofill_story", {
+        payload: {
+          title: title || null,
+          description: description.trim(),
+          asA: asA || null,
+          iWant: iWant || null,
+          soThat: soThat || null,
+          acceptanceCriteria: acceptanceCriteria.filter((c) => c.trim().length),
+        },
+      });
+
+      if (!title && result.title) setTitle(result.title);
+      if (!asA && result.asA) setAsA(result.asA);
+      if (!iWant && result.iWant) setIWant(result.iWant);
+      if (!soThat && result.soThat) setSoThat(result.soThat);
+      if (
+        result.acceptanceCriteria?.length &&
+        acceptanceCriteria.every((c) => !c.trim())
+      ) {
+        setAcceptanceCriteria(result.acceptanceCriteria);
+      }
+    } catch (e) {
+      setAiError(String(e));
+    } finally {
+      setIsAutofilling(false);
     }
   };
 
@@ -371,7 +406,11 @@ export default function App() {
             </header>
 
             <div className="wizardSteps">
-              {["Type", "Details", "Story"].map((step, index) => (
+              {[
+                "Type",
+                "Details",
+                wizardType === "story" ? "Story" : "Review",
+              ].map((step, index) => (
                 <button
                   key={step}
                   className={`step ${wizardStep === index ? "active" : ""}`}
@@ -470,9 +509,7 @@ export default function App() {
                       <option value="">Select epic</option>
                       {epics
                         .filter((epic) =>
-                          projectId
-                            ? epic.project_id === projectId
-                            : true
+                          projectId ? epic.project_id === projectId : true
                         )
                         .map((epic) => (
                           <option key={epic.id} value={epic.id}>
@@ -492,18 +529,23 @@ export default function App() {
                     Stories are the only items that appear on the board.
                   </div>
                 ) : (
-                  <>
-                    <div className="field inline">
+                  <>\n                    <div className="field inline">
                       <label>AI auto-fill</label>
                       <input
                         type="checkbox"
                         checked={useAiAutofill}
                         onChange={(e) => setUseAiAutofill(e.currentTarget.checked)}
                       />
-                      <button className="ghostButton" onClick={handleAutoFill}>
-                        Auto-fill with AI
+                      <button
+                        className="ghostButton"
+                        onClick={handleAutoFill}
+                        disabled={!useAiAutofill || isAutofilling}
+                      >
+                        {isAutofilling ? "Filling…" : "Auto-fill with AI"}
                       </button>
                     </div>
+
+                    {aiError ? <div className="errorText">{aiError}</div> : null}
 
                     <div className="field">
                       <label>As a *</label>

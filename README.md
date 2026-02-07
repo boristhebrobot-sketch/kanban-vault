@@ -5,15 +5,18 @@ A macOS-first Kanban desktop app built with **Tauri 2 + React + TypeScript**.
 The core idea: a local **Markdown vault** on disk.
 
 - **Boards** are Markdown files in `boards/`
-- **Tasks** are Markdown files in `tasks/` (**one task per file**)
+- **Stories** are Markdown files in `tasks/` (**one story per file**)
+- **Projects** are Markdown files in `projects/`
+- **Epics** are Markdown files in `epics/`
 - Frontmatter is **YAML** (`--- ... ---`)
 
 This repo currently ships a minimal read-only UI that:
 
 - Ensures a vault exists in your app data directory
-- Seeds a default board and a couple tasks (first run)
-- Scans boards + tasks from disk
+- Seeds a default board, project, epic, and a couple stories (first run)
+- Scans boards + stories from disk
 - Displays columns and cards
+- Offers a wizard to create projects, epics, and stories
 
 ## Requirements
 
@@ -41,8 +44,17 @@ On first run the app creates a vault under **Tauri app data dir**:
 - `~/Library/Application Support/<bundle-id>/vault/`
   - `boards/`
   - `tasks/`
+  - `projects/`
+  - `epics/`
 
 The current UI shows the exact resolved path at the top.
+
+## OpenAI auto-fill
+
+The story wizard can auto-fill fields via OpenAI.
+
+Configure the API key by setting `OPENAI_API_KEY` in the environment before launching the app.
+Optionally set `OPENAI_MODEL` (default: `gpt-4o-mini`) and `OPENAI_MODEL_FALLBACK` (default: `gpt-4o-mini`).
 
 ## File format
 
@@ -55,25 +67,28 @@ Path: `vault/boards/<boardId>.md`
 id: default
 title: Default Board
 columns:
-  - Todo
-  - Doing
+  - Inbox
+  - Backlog
+  - Ready
+  - In Progress
+  - Review
   - Done
 ---
 
 Optional notes...
 ```
 
-### Task file
+### Story file
 
-Path: `vault/tasks/<taskId>.md`
+Path: `vault/tasks/<storyId>.md`
 
 ```md
 ---
-id: task-123
+id: story-123
 title: Fix syncing
 board: default
-column: Todo
-tags: [backend, urgent]
+column: Backlog
+tags: [backend, urgent, story]
 due: 2026-03-01
 created: 2026-02-06
 updated: 2026-02-06
@@ -92,6 +107,7 @@ Notes:
 - `list_boards()` → parses `boards/*.md`
 - `list_tasks({ boardId? })` → parses `tasks/*.md`
 - `get_board_with_tasks({ boardId })` → board + columns + tasks grouped by column
+- `openai_autofill_story({ payload })` → returns suggested story fields from OpenAI
 
 ## Next steps (not implemented yet)
 

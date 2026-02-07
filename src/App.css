@@ -318,6 +318,13 @@ textarea {
   gap: 10px;
 }
 
+.inlineRow {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 8px;
+  align-items: center;
+}
+
 .segmented {
   display: flex;
   gap: 8px;
