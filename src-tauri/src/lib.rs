@@ -15,16 +15,16 @@ use thiserror::Error;
 enum VaultError {
     #[error("io error: {0}")]
     Io(#[from] std::io::Error),
-    #[error("yaml error: {0}")]
-    Yaml(#[from] serde_yaml::Error),
     #[error("json error: {0}")]
     Json(#[from] serde_json::Error),
     #[error("openai error: {0}")]
     OpenAi(#[from] reqwest::Error),
-    #[error("invalid frontmatter: {0}")]
-    InvalidFrontmatter(String),
+    #[error("invalid data: {0}")]
+    InvalidData(String),
     #[error("board not found: {0}")]
     BoardNotFound(String),
+    #[error("task not found: {0}")]
+    TaskNotFound(String),
     #[error("OpenAI API key not configured. Set OPENAI_API_KEY in the environment.")]
     OpenAiKeyMissing,
 }
@@ -52,6 +52,22 @@ pub struct Task {
     pub created: Option<String>,
     #[serde(default)]
     pub updated: Option<String>,
+    #[serde(default)]
+    pub project_id: Option<String>,
+    #[serde(default)]
+    pub epic_id: Option<String>,
+    #[serde(default)]
+    pub owner: Option<String>,
+    #[serde(default)]
+    pub description: Option<String>,
+    #[serde(default)]
+    pub as_a: Option<String>,
+    #[serde(default)]
+    pub i_want: Option<String>,
+    #[serde(default)]
+    pub so_that: Option<String>,
+    #[serde(default)]
+    pub acceptance_criteria: Option<Vec<String>>,
     #[serde(default)]
     pub body: String,
 }
@@ -104,6 +120,15 @@ pub struct Epic {
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
+struct Db {
+    version: u32,
+    boards: Vec<Board>,
+    tasks: Vec<Task>,
+    projects: Vec<Project>,
+    epics: Vec<Epic>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
 struct OpenAiAutoFillPayload {
     title: Option<String>,
@@ -124,14 +149,12 @@ struct OpenAiAutoFillResponse {
     acceptance_criteria: Option<Vec<String>>,
 }
 
-fn vault_dir(app: &AppHandle) -> Result<PathBuf> {
-    // Use OS-specific app data dir so the vault persists across app restarts.
-    // e.g. ~/Library/Application Support/<bundle-id>/vault
+fn db_path(app: &AppHandle) -> Result<PathBuf> {
     let base = app
         .path()
         .app_data_dir()
-        .map_err(|e| VaultError::InvalidFrontmatter(format!("failed to get app_data_dir: {e}")))?;
-    Ok(base.join("vault"))
+        .map_err(|e| VaultError::InvalidData(format!("failed to get app_data_dir: {e}")))?;
+    Ok(base.join("pm-db.json"))
 }
 
 fn resolve_openai_key() -> Result<String> {
@@ -146,135 +169,9 @@ fn resolve_openai_key() -> Result<String> {
 
 fn resolve_openai_model() -> (String, String) {
     let primary = std::env::var("OPENAI_MODEL").unwrap_or_else(|_| "gpt-4o-mini".to_string());
-    let fallback = std::env::var("OPENAI_MODEL_FALLBACK").unwrap_or_else(|_| "gpt-4o-mini".to_string());
+    let fallback =
+        std::env::var("OPENAI_MODEL_FALLBACK").unwrap_or_else(|_| "gpt-4o-mini".to_string());
     (primary, fallback)
-}
-
-fn ensure_vault_layout(vault: &Path) -> Result<()> {
-    fs::create_dir_all(vault.join("boards"))?;
-    fs::create_dir_all(vault.join("tasks"))?;
-    fs::create_dir_all(vault.join("projects"))?;
-    fs::create_dir_all(vault.join("epics"))?;
-
-    // Seed a default board + a couple sample tasks if empty.
-    let default_board = vault.join("boards").join("default.md");
-    if !default_board.exists() {
-        fs::write(
-            &default_board,
-            r#"---
-id: default
-title: Default Board
-columns:
-  - Inbox
-  - Backlog
-  - Ready
-  - In Progress
-  - Review
-  - Done
----
-
-Project management board for the app.
-"#,
-        )?;
-    }
-
-    let projects_dir = vault.join("projects");
-    let has_any_project = fs::read_dir(&projects_dir)
-        .ok()
-        .and_then(|mut rd| rd.next())
-        .is_some();
-    if !has_any_project {
-        fs::write(
-            projects_dir.join("project-1.md"),
-            r#"---
-id: project-1
-title: Kanban Vault MVP
-owner: Product
-created: 2026-02-06
-description: Core workflows and vault structure.
----
-
-Core workflows and vault structure.
-"#,
-        )?;
-    }
-
-    let epics_dir = vault.join("epics");
-    let has_any_epic = fs::read_dir(&epics_dir)
-        .ok()
-        .and_then(|mut rd| rd.next())
-        .is_some();
-    if !has_any_epic {
-        fs::write(
-            epics_dir.join("epic-1.md"),
-            r#"---
-id: epic-1
-title: Wizard-driven story intake
-project_id: project-1
-owner: Product
-created: 2026-02-06
-description: Guided story creation with AI support.
----
-
-Guided story creation with AI support.
-"#,
-        )?;
-    }
-
-    let tasks_dir = vault.join("tasks");
-    let has_any_task = fs::read_dir(&tasks_dir)
-        .ok()
-        .and_then(|mut rd| rd.next())
-        .is_some();
-    if !has_any_task {
-        fs::write(
-            tasks_dir.join("story-1.md"),
-            r#"---
-id: story-1
-title: Welcome to Kanban Vault
-board: default
-column: Inbox
-tags: [welcome, story]
-created: 2026-02-06
----
-
-This is a story stored as a Markdown file inside the vault.
-"#,
-        )?;
-        fs::write(
-            tasks_dir.join("story-2.md"),
-            r#"---
-id: story-2
-title: Try drag + drop between statuses
-board: default
-column: In Progress
-tags: [ui, story]
-created: 2026-02-06
----
-
-Move this card across columns to update its status.
-"#,
-        )?;
-    }
-
-    Ok(())
-}
-
-fn parse_frontmatter<T: for<'de> Deserialize<'de>>(content: &str) -> Result<(T, String)> {
-    let content = content.replace("\r\n", "\n");
-    if !content.starts_with("---\n") {
-        return Err(VaultError::InvalidFrontmatter(
-            "file must start with YAML frontmatter (---)".to_string(),
-        ));
-    }
-    let rest = &content[4..];
-    let end = rest
-        .find("\n---\n")
-        .ok_or_else(|| VaultError::InvalidFrontmatter("missing closing ---".to_string()))?;
-    let yaml = &rest[..end];
-    let body = &rest[end + 5..];
-    let parsed: T = serde_yaml::from_str(yaml)?;
-    Ok((parsed, body.trim().to_string()))
 }
 
 fn now_epoch() -> String {
@@ -284,198 +181,97 @@ fn now_epoch() -> String {
         .unwrap_or_else(|_| "0".to_string())
 }
 
-fn write_frontmatter<T: Serialize>(path: &Path, fm: &T, body: &str) -> Result<()> {
-    let yaml = serde_yaml::to_string(fm)?;
-    let output = format!("---\n{}---\n\n{}\n", yaml, body.trim());
-    fs::write(path, output)?;
+fn default_db() -> Db {
+    Db {
+        version: 1,
+        boards: vec![Board {
+            id: "default".to_string(),
+            title: "Default Board".to_string(),
+            columns: vec![
+                "Inbox".to_string(),
+                "Backlog".to_string(),
+                "Ready".to_string(),
+                "In Progress".to_string(),
+                "Review".to_string(),
+                "Done".to_string(),
+            ],
+        }],
+        tasks: vec![],
+        projects: vec![],
+        epics: vec![],
+    }
+}
+
+fn ensure_db(path: &Path) -> Result<()> {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    if !path.exists() {
+        let db = default_db();
+        let raw = serde_json::to_string_pretty(&db)?;
+        fs::write(path, raw)?;
+    }
     Ok(())
 }
 
-fn read_board(path: &Path) -> Result<Board> {
-    #[derive(Debug, Deserialize)]
-    struct BoardFm {
-        id: String,
-        title: String,
-        columns: Vec<String>,
-    }
-
+fn load_db(path: &Path) -> Result<Db> {
+    ensure_db(path)?;
     let raw = fs::read_to_string(path)?;
-    let (fm, _body): (BoardFm, String) = parse_frontmatter(&raw)?;
-    Ok(Board {
-        id: fm.id,
-        title: fm.title,
-        columns: fm.columns,
-    })
+    let db: Db = serde_json::from_str(&raw)?;
+    Ok(db)
 }
 
-fn read_task(path: &Path) -> Result<Task> {
-    #[derive(Debug, Deserialize)]
-    struct TaskFm {
-        id: String,
-        title: String,
-        board: String,
-        column: String,
-        #[serde(default)]
-        tags: Vec<String>,
-        #[serde(default)]
-        due: Option<String>,
-        #[serde(default)]
-        created: Option<String>,
-        #[serde(default)]
-        updated: Option<String>,
-    }
-
-    let raw = fs::read_to_string(path)?;
-    let (fm, body): (TaskFm, String) = parse_frontmatter(&raw)?;
-    Ok(Task {
-        id: fm.id,
-        title: fm.title,
-        board: fm.board,
-        column: fm.column,
-        tags: fm.tags,
-        due: fm.due,
-        created: fm.created,
-        updated: fm.updated,
-        body,
-    })
+fn save_db(path: &Path, db: &Db) -> Result<()> {
+    let raw = serde_json::to_string_pretty(db)?;
+    fs::write(path, raw)?;
+    Ok(())
 }
 
-fn read_project(path: &Path) -> Result<Project> {
-    #[derive(Debug, Deserialize)]
-    struct ProjectFm {
-        id: String,
-        title: String,
-        #[serde(default)]
-        owner: Option<String>,
-        #[serde(default)]
-        created: Option<String>,
-        #[serde(default)]
-        updated: Option<String>,
-        #[serde(default)]
-        description: Option<String>,
-    }
-
-    let raw = fs::read_to_string(path)?;
-    let (fm, _body): (ProjectFm, String) = parse_frontmatter(&raw)?;
-    Ok(Project {
-        id: fm.id,
-        title: fm.title,
-        owner: fm.owner,
-        created: fm.created,
-        updated: fm.updated,
-        description: fm.description,
-    })
-}
-
-fn read_epic(path: &Path) -> Result<Epic> {
-    #[derive(Debug, Deserialize)]
-    struct EpicFm {
-        id: String,
-        title: String,
-        #[serde(default)]
-        project_id: Option<String>,
-        #[serde(default)]
-        owner: Option<String>,
-        #[serde(default)]
-        created: Option<String>,
-        #[serde(default)]
-        updated: Option<String>,
-        #[serde(default)]
-        description: Option<String>,
-    }
-
-    let raw = fs::read_to_string(path)?;
-    let (fm, _body): (EpicFm, String) = parse_frontmatter(&raw)?;
-    Ok(Epic {
-        id: fm.id,
-        title: fm.title,
-        project_id: fm.project_id,
-        owner: fm.owner,
-        created: fm.created,
-        updated: fm.updated,
-        description: fm.description,
-    })
-}
-
-fn list_boards_inner(vault: &Path) -> Result<Vec<Board>> {
-    let mut boards = Vec::new();
-    for entry in fs::read_dir(vault.join("boards"))? {
-        let entry = entry?;
-        let path = entry.path();
-        if path.extension().and_then(|s| s.to_str()) != Some("md") {
-            continue;
-        }
-        if let Ok(board) = read_board(&path) {
-            boards.push(board);
-        }
-    }
+fn list_boards_inner(db: &Db) -> Vec<Board> {
+    let mut boards = db.boards.clone();
     boards.sort_by(|a, b| a.title.cmp(&b.title));
-    Ok(boards)
+    boards
 }
 
-fn list_tasks_inner(vault: &Path, board_id: Option<&str>) -> Result<Vec<Task>> {
-    let mut tasks = Vec::new();
-    for entry in fs::read_dir(vault.join("tasks"))? {
-        let entry = entry?;
-        let path = entry.path();
-        if path.extension().and_then(|s| s.to_str()) != Some("md") {
-            continue;
-        }
-        if let Ok(task) = read_task(&path) {
-            if board_id.map(|b| b == task.board).unwrap_or(true) {
-                tasks.push(task);
-            }
-        }
-    }
+fn list_tasks_inner(db: &Db, board_id: Option<&str>) -> Vec<Task> {
+    let mut tasks = db
+        .tasks
+        .iter()
+        .filter(|t| board_id.map(|b| b == t.board).unwrap_or(true))
+        .cloned()
+        .collect::<Vec<_>>();
     tasks.sort_by(|a, b| a.title.cmp(&b.title));
-    Ok(tasks)
+    tasks
 }
 
-fn list_projects_inner(vault: &Path) -> Result<Vec<Project>> {
-    let mut projects = Vec::new();
-    for entry in fs::read_dir(vault.join("projects"))? {
-        let entry = entry?;
-        let path = entry.path();
-        if path.extension().and_then(|s| s.to_str()) != Some("md") {
-            continue;
-        }
-        if let Ok(project) = read_project(&path) {
-            projects.push(project);
-        }
-    }
+fn list_projects_inner(db: &Db) -> Vec<Project> {
+    let mut projects = db.projects.clone();
     projects.sort_by(|a, b| a.title.cmp(&b.title));
-    Ok(projects)
+    projects
 }
 
-fn list_epics_inner(vault: &Path, project_id: Option<&str>) -> Result<Vec<Epic>> {
-    let mut epics = Vec::new();
-    for entry in fs::read_dir(vault.join("epics"))? {
-        let entry = entry?;
-        let path = entry.path();
-        if path.extension().and_then(|s| s.to_str()) != Some("md") {
-            continue;
-        }
-        if let Ok(epic) = read_epic(&path) {
-            if project_id.map(|p| epic.project_id.as_deref() == Some(p)).unwrap_or(true) {
-                epics.push(epic);
-            }
-        }
-    }
+fn list_epics_inner(db: &Db, project_id: Option<&str>) -> Vec<Epic> {
+    let mut epics = db
+        .epics
+        .iter()
+        .filter(|e| project_id.map(|p| e.project_id.as_deref() == Some(p)).unwrap_or(true))
+        .cloned()
+        .collect::<Vec<_>>();
     epics.sort_by(|a, b| a.title.cmp(&b.title));
-    Ok(epics)
+    epics
 }
 
-fn board_with_tasks_inner(vault: &Path, board_id: &str) -> Result<BoardWithTasks> {
-    let boards = list_boards_inner(vault)?;
-    let board = boards
-        .into_iter()
+fn board_with_tasks_inner(db: &Db, board_id: &str) -> Result<BoardWithTasks> {
+    let board = db
+        .boards
+        .iter()
         .find(|b| b.id == board_id)
+        .cloned()
         .ok_or_else(|| VaultError::BoardNotFound(board_id.to_string()))?;
 
-    let tasks = list_tasks_inner(vault, Some(board_id))?;
     let mut by_col: HashMap<String, Vec<Task>> = HashMap::new();
-    for t in tasks {
-        by_col.entry(t.column.clone()).or_default().push(t);
+    for t in db.tasks.iter().filter(|t| t.board == board_id) {
+        by_col.entry(t.column.clone()).or_default().push(t.clone());
     }
 
     let columns = board
@@ -494,31 +290,13 @@ fn board_with_tasks_inner(vault: &Path, board_id: &str) -> Result<BoardWithTasks
     Ok(BoardWithTasks { board, columns })
 }
 
-fn task_path_by_id(vault: &Path, task_id: &str) -> Result<PathBuf> {
-    for entry in fs::read_dir(vault.join("tasks"))? {
-        let entry = entry?;
-        let path = entry.path();
-        if path.extension().and_then(|s| s.to_str()) != Some("md") {
-            continue;
-        }
-        if let Ok(task) = read_task(&path) {
-            if task.id == task_id {
-                return Ok(path);
-            }
-        }
-    }
-    Err(VaultError::InvalidFrontmatter(format!(
-        "task not found: {task_id}"
-    )))
-}
-
 #[tauri::command]
 fn vault_info(app: AppHandle) -> std::result::Result<VaultInfo, String> {
     (|| -> Result<VaultInfo> {
-        let vault = vault_dir(&app)?;
-        ensure_vault_layout(&vault)?;
+        let path = db_path(&app)?;
+        ensure_db(&path)?;
         Ok(VaultInfo {
-            path: vault.to_string_lossy().to_string(),
+            path: path.to_string_lossy().to_string(),
         })
     })()
     .map_err(|e| e.to_string())
@@ -527,9 +305,9 @@ fn vault_info(app: AppHandle) -> std::result::Result<VaultInfo, String> {
 #[tauri::command]
 fn list_boards(app: AppHandle) -> std::result::Result<Vec<Board>, String> {
     (|| -> Result<Vec<Board>> {
-        let vault = vault_dir(&app)?;
-        ensure_vault_layout(&vault)?;
-        list_boards_inner(&vault)
+        let path = db_path(&app)?;
+        let db = load_db(&path)?;
+        Ok(list_boards_inner(&db))
     })()
     .map_err(|e| e.to_string())
 }
@@ -537,9 +315,9 @@ fn list_boards(app: AppHandle) -> std::result::Result<Vec<Board>, String> {
 #[tauri::command]
 fn list_tasks(app: AppHandle, board_id: Option<String>) -> std::result::Result<Vec<Task>, String> {
     (|| -> Result<Vec<Task>> {
-        let vault = vault_dir(&app)?;
-        ensure_vault_layout(&vault)?;
-        list_tasks_inner(&vault, board_id.as_deref())
+        let path = db_path(&app)?;
+        let db = load_db(&path)?;
+        Ok(list_tasks_inner(&db, board_id.as_deref()))
     })()
     .map_err(|e| e.to_string())
 }
@@ -550,9 +328,9 @@ fn get_board_with_tasks(
     board_id: String,
 ) -> std::result::Result<BoardWithTasks, String> {
     (|| -> Result<BoardWithTasks> {
-        let vault = vault_dir(&app)?;
-        ensure_vault_layout(&vault)?;
-        board_with_tasks_inner(&vault, &board_id)
+        let path = db_path(&app)?;
+        let db = load_db(&path)?;
+        board_with_tasks_inner(&db, &board_id)
     })()
     .map_err(|e| e.to_string())
 }
@@ -570,23 +348,20 @@ fn update_task_column(
     payload: UpdateTaskColumnPayload,
 ) -> std::result::Result<Task, String> {
     (|| -> Result<Task> {
-        let vault = vault_dir(&app)?;
-        ensure_vault_layout(&vault)?;
-        let path = task_path_by_id(&vault, &payload.task_id)?;
-        let raw = fs::read_to_string(&path)?;
-        let (mut fm, body): (serde_yaml::Value, String) = parse_frontmatter(&raw)?;
-        if let Some(map) = fm.as_mapping_mut() {
-            map.insert(
-                serde_yaml::Value::String("column".to_string()),
-                serde_yaml::Value::String(payload.column.clone()),
-            );
-            map.insert(
-                serde_yaml::Value::String("updated".to_string()),
-                serde_yaml::Value::String(now_epoch()),
-            );
-        }
-        write_frontmatter(&path, &fm, &body)?;
-        read_task(&path)
+        let path = db_path(&app)?;
+        let mut db = load_db(&path)?;
+
+        let task = db
+            .tasks
+            .iter_mut()
+            .find(|t| t.id == payload.task_id)
+            .ok_or_else(|| VaultError::TaskNotFound(payload.task_id.clone()))?;
+
+        task.column = payload.column.clone();
+        task.updated = Some(now_epoch());
+
+        save_db(&path, &db)?;
+        Ok(task.clone())
     })()
     .map_err(|e| e.to_string())
 }
@@ -594,9 +369,9 @@ fn update_task_column(
 #[tauri::command]
 fn list_projects(app: AppHandle) -> std::result::Result<Vec<Project>, String> {
     (|| -> Result<Vec<Project>> {
-        let vault = vault_dir(&app)?;
-        ensure_vault_layout(&vault)?;
-        list_projects_inner(&vault)
+        let path = db_path(&app)?;
+        let db = load_db(&path)?;
+        Ok(list_projects_inner(&db))
     })()
     .map_err(|e| e.to_string())
 }
@@ -604,9 +379,9 @@ fn list_projects(app: AppHandle) -> std::result::Result<Vec<Project>, String> {
 #[tauri::command]
 fn list_epics(app: AppHandle, project_id: Option<String>) -> std::result::Result<Vec<Epic>, String> {
     (|| -> Result<Vec<Epic>> {
-        let vault = vault_dir(&app)?;
-        ensure_vault_layout(&vault)?;
-        list_epics_inner(&vault, project_id.as_deref())
+        let path = db_path(&app)?;
+        let db = load_db(&path)?;
+        Ok(list_epics_inner(&db, project_id.as_deref()))
     })()
     .map_err(|e| e.to_string())
 }
@@ -649,8 +424,9 @@ fn create_project(
     payload: CreateProjectPayload,
 ) -> std::result::Result<Project, String> {
     (|| -> Result<Project> {
-        let vault = vault_dir(&app)?;
-        ensure_vault_layout(&vault)?;
+        let path = db_path(&app)?;
+        let mut db = load_db(&path)?;
+
         let id = format!("project-{}", now_epoch());
         let fm = Project {
             id: id.clone(),
@@ -660,9 +436,9 @@ fn create_project(
             updated: None,
             description: payload.description.clone(),
         };
-        let body = payload.description.unwrap_or_default();
-        let path = vault.join("projects").join(format!("{}.md", id));
-        write_frontmatter(&path, &fm, &body)?;
+
+        db.projects.push(fm.clone());
+        save_db(&path, &db)?;
         Ok(fm)
     })()
     .map_err(|e| e.to_string())
@@ -671,8 +447,9 @@ fn create_project(
 #[tauri::command]
 fn create_epic(app: AppHandle, payload: CreateEpicPayload) -> std::result::Result<Epic, String> {
     (|| -> Result<Epic> {
-        let vault = vault_dir(&app)?;
-        ensure_vault_layout(&vault)?;
+        let path = db_path(&app)?;
+        let mut db = load_db(&path)?;
+
         let id = format!("epic-{}", now_epoch());
         let fm = Epic {
             id: id.clone(),
@@ -683,9 +460,9 @@ fn create_epic(app: AppHandle, payload: CreateEpicPayload) -> std::result::Resul
             updated: None,
             description: payload.description.clone(),
         };
-        let body = payload.description.unwrap_or_default();
-        let path = vault.join("epics").join(format!("{}.md", id));
-        write_frontmatter(&path, &fm, &body)?;
+
+        db.epics.push(fm.clone());
+        save_db(&path, &db)?;
         Ok(fm)
     })()
     .map_err(|e| e.to_string())
@@ -694,63 +471,40 @@ fn create_epic(app: AppHandle, payload: CreateEpicPayload) -> std::result::Resul
 #[tauri::command]
 fn create_story(app: AppHandle, payload: CreateStoryPayload) -> std::result::Result<Task, String> {
     (|| -> Result<Task> {
-        let vault = vault_dir(&app)?;
-        ensure_vault_layout(&vault)?;
-        let id = format!("story-{}", now_epoch());
-        #[derive(Debug, Serialize)]
-        struct StoryFm {
-            id: String,
-            title: String,
-            board: String,
-            column: String,
-            #[serde(skip_serializing_if = "Option::is_none")]
-            project_id: Option<String>,
-            #[serde(skip_serializing_if = "Option::is_none")]
-            epic_id: Option<String>,
-            #[serde(skip_serializing_if = "Option::is_none")]
-            owner: Option<String>,
-            #[serde(skip_serializing_if = "Option::is_none")]
-            description: Option<String>,
-            #[serde(skip_serializing_if = "Option::is_none")]
-            as_a: Option<String>,
-            #[serde(skip_serializing_if = "Option::is_none")]
-            i_want: Option<String>,
-            #[serde(skip_serializing_if = "Option::is_none")]
-            so_that: Option<String>,
-            #[serde(skip_serializing_if = "Option::is_none")]
-            acceptance_criteria: Option<Vec<String>>,
-            #[serde(skip_serializing_if = "Option::is_none")]
-            created: Option<String>,
-            #[serde(skip_serializing_if = "Option::is_none")]
-            updated: Option<String>,
-            #[serde(default)]
-            tags: Vec<String>,
-        }
+        let path = db_path(&app)?;
+        let mut db = load_db(&path)?;
 
-        let fm = StoryFm {
+        let id = format!("story-{}", now_epoch());
+        let description = payload.description.clone().unwrap_or_default();
+        let fm = Task {
             id: id.clone(),
             title: payload.title,
             board: "default".to_string(),
             column: payload
                 .column
                 .unwrap_or_else(|| "Backlog".to_string()),
+            tags: vec!["story".to_string()],
+            due: None,
+            created: Some(now_epoch()),
+            updated: None,
             project_id: payload.project_id,
             epic_id: payload.epic_id,
             owner: payload.owner,
-            description: payload.description.clone(),
+            description: if description.is_empty() {
+                None
+            } else {
+                Some(description.clone())
+            },
             as_a: payload.as_a,
             i_want: payload.i_want,
             so_that: payload.so_that,
             acceptance_criteria: payload.acceptance_criteria,
-            created: Some(now_epoch()),
-            updated: None,
-            tags: vec!["story".to_string()],
+            body: description,
         };
 
-        let body = payload.description.unwrap_or_default();
-        let path = vault.join("tasks").join(format!("{}.md", id));
-        write_frontmatter(&path, &fm, &body)?;
-        read_task(&path)
+        db.tasks.push(fm.clone());
+        save_db(&path, &db)?;
+        Ok(fm)
     })()
     .map_err(|e| e.to_string())
 }
@@ -804,13 +558,12 @@ async fn openai_autofill_story(
             let status = response.status();
             let text = response.text().await.unwrap_or_default();
             let should_fallback = model != fallback_model
-                && (status.as_u16() == 404
-                    || text.to_lowercase().contains("model"));
+                && (status.as_u16() == 404 || text.to_lowercase().contains("model"));
 
             if should_fallback {
                 response = request(&fallback_model).send().await?;
             } else {
-                return Err(VaultError::InvalidFrontmatter(format!(
+                return Err(VaultError::InvalidData(format!(
                     "OpenAI error: {text}"
                 )));
             }
@@ -818,7 +571,7 @@ async fn openai_autofill_story(
 
         if !response.status().is_success() {
             let text = response.text().await.unwrap_or_default();
-            return Err(VaultError::InvalidFrontmatter(format!(
+            return Err(VaultError::InvalidData(format!(
                 "OpenAI error: {text}"
             )));
         }
@@ -834,9 +587,30 @@ async fn openai_autofill_story(
 
         let parsed: OpenAiAutoFillResponse = serde_json::from_str(content)?;
         Ok(parsed)
-    })
+    })()
     .await
     .map_err(|e| e.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn temp_path() -> PathBuf {
+        let mut path = std::env::temp_dir();
+        path.push(format!("pm-db-test-{}.json", now_epoch()));
+        path
+    }
+
+    #[test]
+    fn creates_default_db() {
+        let path = temp_path();
+        ensure_db(&path).unwrap();
+        let db = load_db(&path).unwrap();
+        assert_eq!(db.boards.len(), 1);
+        assert!(db.tasks.is_empty());
+        let _ = fs::remove_file(path);
+    }
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]

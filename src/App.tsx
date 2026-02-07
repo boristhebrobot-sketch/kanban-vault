@@ -274,6 +274,7 @@ export default function App() {
     event: DragEvent<HTMLElement>
   ) => {
     event.preventDefault();
+    event.stopPropagation();
     const raw =
       event.dataTransfer.getData("application/json") ||
       event.dataTransfer.getData("text/plain");
@@ -307,7 +308,7 @@ export default function App() {
         <div className="title">
           <h1>Kanban Vault</h1>
           <div className="subtitle">
-            macOS-only • Tauri 2 • Markdown vault
+            macOS-only • Tauri 2 • Local JSON database
           </div>
         </div>
 
@@ -335,7 +336,7 @@ export default function App() {
       <section className="meta">
         {vaultInfo ? (
           <div className="metaRow">
-            <span className="metaLabel">Vault:</span>
+            <span className="metaLabel">Database:</span>
             <code className="metaValue">{vaultInfo.path}</code>
           </div>
         ) : null}
@@ -370,13 +371,18 @@ export default function App() {
                 <div className="columnCount">{col.tasks.length}</div>
               </div>
 
-              <div className="cards">
+              <div
+                className="cards"
+                onDrop={handleDrop(col.name)}
+                onDragOver={handleDragOver}
+              >
                 {col.tasks.map((t) => (
                   <article
                     key={t.id}
                     className="card"
                     draggable
                     onDragStart={handleDragStart(t.id, col.name)}
+                    onDragOver={handleDragOver}
                   >
                     <div className="cardTitle">{t.title}</div>
                     <div className="cardMeta">

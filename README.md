@@ -2,13 +2,11 @@
 
 A macOS-first Kanban desktop app built with **Tauri 2 + React + TypeScript**.
 
-The core idea: a local **Markdown vault** on disk.
+The core idea: a local **JSON database** on disk.
 
-- **Boards** are Markdown files in `boards/`
-- **Stories** are Markdown files in `tasks/` (**one story per file**)
-- **Projects** are Markdown files in `projects/`
-- **Epics** are Markdown files in `epics/`
-- Frontmatter is **YAML** (`--- ... ---`)
+- Stored in a single file: `pm-db.json`
+- Contains `boards`, `tasks`, `projects`, and `epics`
+- Designed for simple, fast local usage
 
 This repo currently ships a minimal read-only UI that:
 
@@ -37,15 +35,11 @@ npm install
 npm run tauri dev
 ```
 
-## Vault location
+## Database location
 
-On first run the app creates a vault under **Tauri app data dir**:
+On first run the app creates a database file under **Tauri app data dir**:
 
-- `~/Library/Application Support/<bundle-id>/vault/`
-  - `boards/`
-  - `tasks/`
-  - `projects/`
-  - `epics/`
+- `~/Library/Application Support/<bundle-id>/pm-db.json`
 
 The current UI shows the exact resolved path at the top.
 
@@ -58,43 +52,34 @@ Optionally set `OPENAI_MODEL` (default: `gpt-4o-mini`) and `OPENAI_MODEL_FALLBAC
 
 ## File format
 
-### Board file
+`pm-db.json` (example):
 
-Path: `vault/boards/<boardId>.md`
-
-```md
----
-id: default
-title: Default Board
-columns:
-  - Inbox
-  - Backlog
-  - Ready
-  - In Progress
-  - Review
-  - Done
----
-
-Optional notes...
-```
-
-### Story file
-
-Path: `vault/tasks/<storyId>.md`
-
-```md
----
-id: story-123
-title: Fix syncing
-board: default
-column: Backlog
-tags: [backend, urgent, story]
-due: 2026-03-01
-created: 2026-02-06
-updated: 2026-02-06
----
-
-Optional markdown body/description.
+```json
+{
+  "version": 1,
+  "boards": [
+    {
+      "id": "default",
+      "title": "Default Board",
+      "columns": ["Inbox", "Backlog", "Ready", "In Progress", "Review", "Done"]
+    }
+  ],
+  "tasks": [
+    {
+      "id": "story-123",
+      "title": "Fix syncing",
+      "board": "default",
+      "column": "Backlog",
+      "tags": ["backend", "urgent", "story"],
+      "due": "2026-03-01",
+      "created": "1770485517",
+      "updated": null,
+      "body": "Optional description"
+    }
+  ],
+  "projects": [],
+  "epics": []
+}
 ```
 
 Notes:
@@ -112,6 +97,6 @@ Notes:
 ## Next steps (not implemented yet)
 
 - Editing boards and tasks
-- Drag & drop across columns
-- Task detail view + markdown editor
-- File watching for live updates
+- Task detail view
+- JSON schema migrations for versioned upgrades
+- Live update watching (optional)

@@ -1,8 +1,8 @@
 :root {
   font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica,
     Arial, "Apple Color Emoji", "Segoe UI Emoji";
-  color: rgba(255, 255, 255, 0.9);
-  background: #0b1020;
+  color: rgba(255, 255, 255, 0.94);
+  background: #10162a;
 }
 
 body {
@@ -13,6 +13,7 @@ body {
   display: flex;
   flex-direction: column;
   min-height: 100vh;
+  background: radial-gradient(circle at top, rgba(90, 130, 255, 0.08), transparent 45%);
 }
 
 .topbar {
@@ -21,8 +22,8 @@ body {
   justify-content: space-between;
   gap: 16px;
   padding: 18px 18px 12px;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
-  background: linear-gradient(180deg, rgba(255, 255, 255, 0.06), transparent);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.12);
+  background: linear-gradient(180deg, rgba(120, 160, 255, 0.18), transparent);
 }
 
 .title h1 {
@@ -50,9 +51,9 @@ body {
 }
 
 select {
-  background: rgba(255, 255, 255, 0.06);
-  border: 1px solid rgba(255, 255, 255, 0.14);
-  color: rgba(255, 255, 255, 0.9);
+  background: rgba(255, 255, 255, 0.12);
+  border: 1px solid rgba(255, 255, 255, 0.22);
+  color: rgba(255, 255, 255, 0.95);
   padding: 8px 10px;
   border-radius: 10px;
   outline: none;
@@ -80,8 +81,8 @@ select {
   font-size: 12px;
   padding: 3px 6px;
   border-radius: 8px;
-  background: rgba(255, 255, 255, 0.06);
-  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: rgba(255, 255, 255, 0.12);
+  border: 1px solid rgba(255, 255, 255, 0.18);
 }
 
 .state {
@@ -114,8 +115,8 @@ select {
 }
 
 .column {
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  background: rgba(255, 255, 255, 0.08);
   border-radius: 14px;
   display: flex;
   flex-direction: column;
@@ -150,10 +151,11 @@ select {
 }
 
 .card {
-  background: rgba(11, 16, 32, 0.75);
-  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: rgba(21, 30, 52, 0.85);
+  border: 1px solid rgba(255, 255, 255, 0.18);
   border-radius: 12px;
   padding: 10px;
+  box-shadow: 0 8px 18px rgba(3, 8, 20, 0.35);
 }
 
 .cardTitle {
@@ -195,17 +197,18 @@ select {
 }
 
 .button {
-  background: #4b7dff;
+  background: linear-gradient(135deg, #6a92ff, #4b7dff);
   border: none;
   color: white;
   padding: 8px 14px;
   border-radius: 10px;
   font-size: 13px;
   cursor: pointer;
+  box-shadow: 0 6px 14px rgba(60, 110, 255, 0.35);
 }
 
 .button:hover {
-  background: #3a6bff;
+  background: linear-gradient(135deg, #7aa0ff, #5485ff);
 }
 
 .ghostButton {
@@ -224,9 +227,9 @@ select {
 
 input,
 textarea {
-  background: rgba(255, 255, 255, 0.06);
-  border: 1px solid rgba(255, 255, 255, 0.14);
-  color: rgba(255, 255, 255, 0.9);
+  background: rgba(255, 255, 255, 0.12);
+  border: 1px solid rgba(255, 255, 255, 0.22);
+  color: rgba(255, 255, 255, 0.95);
   padding: 8px 10px;
   border-radius: 10px;
   outline: none;
@@ -252,8 +255,8 @@ textarea {
 
 .modal {
   width: min(760px, 100%);
-  background: #0f162b;
-  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: #151f3a;
+  border: 1px solid rgba(255, 255, 255, 0.18);
   border-radius: 16px;
   box-shadow: 0 20px 60px rgba(0, 0, 0, 0.45);
   display: flex;
