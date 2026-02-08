@@ -351,17 +351,20 @@ fn update_task_column(
         let path = db_path(&app)?;
         let mut db = load_db(&path)?;
 
-        let task = db
-            .tasks
-            .iter_mut()
-            .find(|t| t.id == payload.task_id)
-            .ok_or_else(|| VaultError::TaskNotFound(payload.task_id.clone()))?;
+        let updated = {
+            let task = db
+                .tasks
+                .iter_mut()
+                .find(|t| t.id == payload.task_id)
+                .ok_or_else(|| VaultError::TaskNotFound(payload.task_id.clone()))?;
 
-        task.column = payload.column.clone();
-        task.updated = Some(now_epoch());
+            task.column = payload.column.clone();
+            task.updated = Some(now_epoch());
+            task.clone()
+        };
 
         save_db(&path, &db)?;
-        Ok(task.clone())
+        Ok(updated)
     })()
     .map_err(|e| e.to_string())
 }
@@ -587,7 +590,7 @@ async fn openai_autofill_story(
 
         let parsed: OpenAiAutoFillResponse = serde_json::from_str(content)?;
         Ok(parsed)
-    })()
+    })
     .await
     .map_err(|e| e.to_string())
 }
